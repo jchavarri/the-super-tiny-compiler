@@ -376,7 +376,11 @@
 /* We start by accepting an input string of code, and we're gonna set up two
    things... */
 type tokenType =
-  | Paren char
+  | OpenParen
+  | CloseParen
+  | Number string
+  | String string
+  | AccString string
   | Other char;
 
 external stringify : Js.t {..} => string = "" [@@bs.val] [@@bs.scope "JSON"];
@@ -408,14 +412,21 @@ let tokenizer input => {
        character.
 
        We check to see if we have an open parenthesis: */
-    switch input {
+    switch (input, tokens) {
     /* If we do, we push a new token with the type `paren` and set the value
        to an open parenthesis. */
-    | ['(', ...r] => tok r [Paren '(', ...tokens]
-    | [any, ...r] => tok r [Other any, ...tokens]
-    | [] => List.rev tokens
+    | (['(', ...xi], t) => tok xi [OpenParen, ...t]
+    | ([')', ...xi], t) => tok xi [CloseParen, ...t]
+    | ([' ' | '\t' | '\r' | '\n', ...xi], t) => tok xi t
+    | (['"', ...xi], [AccString s, xt]) => tok xi [String s, xt]
+    | ([c, ...xi], [AccString s, xt]) => tok xi [AccString (s ^ Char.escaped c), xt]
+    | (['0'..'9' as c, ...xi], [Number n, xt]) => tok xi [Number (n ^ Char.escaped c), xt]
+    | (['0'..'9' as c, ...xi], t) => tok xi [Number (Char.escaped c), ...t]
+    | (['"', ...xi], xt) => tok xi [AccString "", ...xt]
+    | ([c, ...xi], t) => tok xi [Other c, ...t]
+    | ([], t) => List.rev t
     };
   tok (explode input) []
 };
 
-Js.log (tokenizer "Test( one (");
+Js.log (Js.Json.stringifyAny (tokenizer "(add 2 4)"));
