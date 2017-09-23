@@ -375,13 +375,35 @@
  */
 /* We start by accepting an input string of code, and we're gonna set up two
    things... */
-type tokenType =
+type result 'a 'b =
+  | Ok 'a
+  | Error 'b;
+
+type token =
   | OpenParen
   | CloseParen
   | Number string
   | String string
-  | AccString string
-  | Other char;
+  | Name string;
+
+type state =
+  | Init
+  | ParsingNumber
+  | ParsingString
+  | ParsingName;
+
+type machine = {
+  current: option token,
+  parsedTokens: list token,
+  state
+};
+
+type astNode =
+  | NumberLiteral string
+  | StringLiteral string
+  | CallExpression string (list astNode);
+
+let initialMachine = {current: None, parsedTokens: [], state: Init};
 
 external stringify : Js.t {..} => string = "" [@@bs.val] [@@bs.scope "JSON"];
 
@@ -406,27 +428,88 @@ let tokenizer input => {
      We do this because we may want to increment `current` many times within a
      single loop because our tokens can be any length. */
   /* We're also going to store the `current` character in the `input`. */
-  let rec tok input tokens =>
+  let rec tok input current tokens state =>
     /* The first thing we want to check for is an open parenthesis. This will
        later be used for `CallExpression` but for now we only care about the
        character.
 
        We check to see if we have an open parenthesis: */
-    switch (input, tokens) {
-    /* If we do, we push a new token with the type `paren` and set the value
-       to an open parenthesis. */
-    | (['(', ...xi], t) => tok xi [OpenParen, ...t]
-    | ([')', ...xi], t) => tok xi [CloseParen, ...t]
-    | ([' ' | '\t' | '\r' | '\n', ...xi], t) => tok xi t
-    | (['"', ...xi], [AccString s, xt]) => tok xi [String s, xt]
-    | ([c, ...xi], [AccString s, xt]) => tok xi [AccString (s ^ Char.escaped c), xt]
-    | (['0'..'9' as c, ...xi], [Number n, xt]) => tok xi [Number (n ^ Char.escaped c), xt]
-    | (['0'..'9' as c, ...xi], t) => tok xi [Number (Char.escaped c), ...t]
-    | (['"', ...xi], xt) => tok xi [AccString "", ...xt]
-    | ([c, ...xi], t) => tok xi [Other c, ...t]
-    | ([], t) => List.rev t
+    switch (input, current, tokens, state) {
+    /* State: Init */
+    | (['(', ...xi], None, t, Init) => tok xi None [OpenParen, ...t] Init
+    | ([')', ...xi], None, t, Init) => tok xi None [CloseParen, ...t] Init
+    | ([' ' | '\t' | '\r' | '\n', ...xi], None, t, Init) => tok xi None t Init
+    | (['"', ...xi], None, t, Init) => tok xi (Some (String "")) t ParsingString
+    | (['0'..'9' as i, ...xi], None, t, Init) =>
+      tok xi (Some (Number (Char.escaped i))) t ParsingNumber
+    | (['a'..'z' as i, ...xi], None, t, Init) =>
+      tok xi (Some (Name (Char.escaped i))) t ParsingName
+    | ([], None, t, Init) => List.rev t
+    /* State: ParsingString */
+    | (['"', ...xi], Some (String c), t, ParsingString) => tok xi None [String c, ...t] Init
+    | ([i, ...xi], Some (String c), t, ParsingString) =>
+      tok xi (Some (String (c ^ Char.escaped i))) t ParsingString
+    /* State: ParsingNumber */
+    | (['0'..'9' as i, ...xi], Some (Number c), t, ParsingNumber) =>
+      tok xi (Some (Number (c ^ Char.escaped i))) t ParsingNumber
+    | ([')', ...xi], Some s, t, ParsingNumber) => tok xi None [CloseParen, s, ...t] Init
+    | ([' ', ...xi], Some s, t, ParsingNumber) => tok xi None [s, ...t] Init
+    /* State: ParsingName */
+    | (['a'..'z' as i, ...xi], Some (Name c), t, ParsingName) =>
+      tok xi (Some (Name (c ^ Char.escaped i))) t ParsingName
+    | ([' ', ...xi], Some (Name c), t, ParsingName) => tok xi None [Name c, ...t] Init
+    | (_, _, t, _) => List.rev t /* TODO: handle errors */
     };
-  tok (explode input) []
+  tok (explode input) initialMachine.current initialMachine.parsedTokens initialMachine.state
 };
 
-Js.log (Js.Json.stringifyAny (tokenizer "(add 2 4)"));
+let parser tokens => {
+  let rec parse tokens stack program =>
+    switch (tokens, stack, program) {
+    | ([OpenParen, Name name, ...xt], s, p) => parse xt [CallExpression name [], ...s] p
+    | ([Number num, ...xt], [CallExpression s params, ...xs], p) =>
+      parse xt [CallExpression s [NumberLiteral num, ...params], ...xs] p
+    | ([String str, ...xt], [CallExpression s params, ...xs], p) =>
+      parse xt [CallExpression s [StringLiteral str, ...params], ...xs] p
+    | ([CloseParen, ...xt], [ce, ...s], p) => parse xt s [ce, ...p]
+    /* | (_, _, p) => Ok p */
+    | ([], [], p) => Ok (List.rev p)
+    | (_, [_, ..._], _) => Error "Unmatched opened and closed parenthesis"
+    | ([Number _, ..._], _, _) => Error "Unexpected \"Number\" token"
+    | ([String _, ..._], _, _) => Error "Unexpected \"String\" token"
+    | ([Name _, ..._], _, _) => Error "Unexpected \"Name\" token"
+    | ([OpenParen, ..._], _, _) => Error "Unexpected \"OpenParen\" token"
+    | ([CloseParen, ..._], _, _) => Error "Unexpected \"CloseParen\" token"
+    };
+  parse tokens [] []
+};
+
+let debugToken token =>
+  switch token {
+  | OpenParen => "OpenParen"
+  | CloseParen => "CloseParen"
+  | Number s => "Number " ^ s
+  | String s => "String " ^ s
+  | Name s => "Name " ^ s
+  };
+
+let rec debugAstNode astNode =>
+  switch astNode {
+  | NumberLiteral n => String.concat "" ["Number", n, " "]
+  | StringLiteral s => String.concat "" ["String", s, " "]
+  | CallExpression n params =>
+    String.concat
+      " " ["CallExpression", n, List.fold_left (fun acc x => debugAstNode x ^ acc) "" params]
+  };
+
+let test = parser (tokenizer "(add 2 (subtract 4 2))");
+
+/* Js.log (Js.Json.stringifyAny (tokenizer "(add 2 4)")); */
+List.iter (fun k => Js.log (debugToken k)) (tokenizer "(add 2 (subtract 4 2))");
+let parsePrinted =
+  switch test {
+  | Ok astTree => List.fold_left (fun acc x => debugAstNode x ^ acc) "" astTree
+  | Error msg => "Error at parse stage: " ^ msg
+  };
+
+Js.log parsePrinted;
