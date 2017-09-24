@@ -386,16 +386,9 @@ type token =
   | String string
   | Name string;
 
-type state =
-  | Init
-  | ParsingNumber
-  | ParsingString
-  | ParsingName;
-
-type machine = {
+type tokenMachine = {
   current: option token,
-  parsedTokens: list token,
-  state
+  parsed: list token
 };
 
 type astNode =
@@ -403,7 +396,7 @@ type astNode =
   | StringLiteral string
   | CallExpression string (list astNode);
 
-let initialMachine = {current: None, parsedTokens: [], state: Init};
+let machine = {current: None, parsed: []};
 
 external stringify : Js.t {..} => string = "" [@@bs.val] [@@bs.scope "JSON"];
 
@@ -428,39 +421,36 @@ let tokenizer input => {
      We do this because we may want to increment `current` many times within a
      single loop because our tokens can be any length. */
   /* We're also going to store the `current` character in the `input`. */
-  let rec tok input current tokens state =>
+  let rec tok input current tokens =>
     /* The first thing we want to check for is an open parenthesis. This will
        later be used for `CallExpression` but for now we only care about the
        character.
 
        We check to see if we have an open parenthesis: */
-    switch (input, current, tokens, state) {
-    /* State: Init */
-    | (['(', ...xi], None, t, Init) => tok xi None [OpenParen, ...t] Init
-    | ([')', ...xi], None, t, Init) => tok xi None [CloseParen, ...t] Init
-    | ([' ' | '\t' | '\r' | '\n', ...xi], None, t, Init) => tok xi None t Init
-    | (['"', ...xi], None, t, Init) => tok xi (Some (String "")) t ParsingString
-    | (['0'..'9' as i, ...xi], None, t, Init) =>
-      tok xi (Some (Number (Char.escaped i))) t ParsingNumber
-    | (['a'..'z' as i, ...xi], None, t, Init) =>
-      tok xi (Some (Name (Char.escaped i))) t ParsingName
-    | ([], None, t, Init) => List.rev t
+    switch (input, current, tokens) {
+    /* State: Nothing in current */
+    | (['(', ...xi], None, t) => tok xi None [OpenParen, ...t]
+    | ([')', ...xi], None, t) => tok xi None [CloseParen, ...t]
+    | ([' ' | '\t' | '\r' | '\n', ...xi], None, t) => tok xi None t
+    | (['"', ...xi], None, t) => tok xi (Some (String "")) t
+    | (['0'..'9' as i, ...xi], None, t) => tok xi (Some (Number (Char.escaped i))) t
+    | (['a'..'z' as i, ...xi], None, t) => tok xi (Some (Name (Char.escaped i))) t
+    | ([], None, t) => List.rev t
     /* State: ParsingString */
-    | (['"', ...xi], Some (String c), t, ParsingString) => tok xi None [String c, ...t] Init
-    | ([i, ...xi], Some (String c), t, ParsingString) =>
-      tok xi (Some (String (c ^ Char.escaped i))) t ParsingString
+    | (['"', ...xi], Some (String c), t) => tok xi None [String c, ...t] /* TODO escape double quotes :) */
+    | ([i, ...xi], Some (String c), t) => tok xi (Some (String (c ^ Char.escaped i))) t
     /* State: ParsingNumber */
-    | (['0'..'9' as i, ...xi], Some (Number c), t, ParsingNumber) =>
-      tok xi (Some (Number (c ^ Char.escaped i))) t ParsingNumber
-    | ([')', ...xi], Some s, t, ParsingNumber) => tok xi None [CloseParen, s, ...t] Init
-    | ([' ', ...xi], Some s, t, ParsingNumber) => tok xi None [s, ...t] Init
+    | (['0'..'9' as i, ...xi], Some (Number c), t) => tok xi (Some (Number (c ^ Char.escaped i))) t
+    | ([')', ...xi], Some (Number c), t) => tok xi None [CloseParen, (Number c), ...t]
+    | ([' ', ...xi], Some (Number c), t) => tok xi None [(Number c), ...t]
     /* State: ParsingName */
-    | (['a'..'z' as i, ...xi], Some (Name c), t, ParsingName) =>
-      tok xi (Some (Name (c ^ Char.escaped i))) t ParsingName
-    | ([' ', ...xi], Some (Name c), t, ParsingName) => tok xi None [Name c, ...t] Init
-    | (_, _, t, _) => List.rev t /* TODO: handle errors */
+    | (['a'..'z' as i, ...xi], Some (Name c), t) => tok xi (Some (Name (c ^ Char.escaped i))) t
+    | ([')', ...xi], Some (Name c), t) => tok xi None [CloseParen, (Name c), ...t]
+    | ([' ', ...xi], Some (Name c), t) => tok xi None [(Name c), ...t]
+    /* Errors */
+    | (_, _, t) => List.rev t /* TODO: handle errors */
     };
-  tok (explode input) initialMachine.current initialMachine.parsedTokens initialMachine.state
+  tok (explode input) machine.current machine.parsed
 };
 
 let parser tokens => {
@@ -472,7 +462,6 @@ let parser tokens => {
     | ([String str, ...xt], [CallExpression s params, ...xs], p) =>
       parse xt [CallExpression s [StringLiteral str, ...params], ...xs] p
     | ([CloseParen, ...xt], [ce, ...s], p) => parse xt s [ce, ...p]
-    /* | (_, _, p) => Ok p */
     | ([], [], p) => Ok (List.rev p)
     | (_, [_, ..._], _) => Error "Unmatched opened and closed parenthesis"
     | ([Number _, ..._], _, _) => Error "Unexpected \"Number\" token"
@@ -505,7 +494,7 @@ let rec debugAstNode astNode =>
 let test = parser (tokenizer "(add 2 (subtract 4 2))");
 
 /* Js.log (Js.Json.stringifyAny (tokenizer "(add 2 4)")); */
-List.iter (fun k => Js.log (debugToken k)) (tokenizer "(add 2 (subtract 4 2))");
+/* List.iter (fun k => Js.log (debugToken k)) (tokenizer "(add 2 (subtract 4 2))"); */
 let parsePrinted =
   switch test {
   | Ok astTree => List.fold_left (fun acc x => debugAstNode x ^ acc) "" astTree
