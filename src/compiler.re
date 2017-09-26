@@ -396,6 +396,15 @@ type astNode =
   | StringLiteral string
   | CallExpression string (list astNode);
 
+type callee =
+  | Identifier string;
+
+type transformedAstNode =
+  | TNumber string
+  | TString string
+  | TCallExpression callee (list transformedAstNode)
+  | TExpressionStatement transformedAstNode;
+
 let machine = {current: None, parsed: []};
 
 external stringify : Js.t {..} => string = "" [@@bs.val] [@@bs.scope "JSON"];
@@ -441,12 +450,12 @@ let tokenizer input => {
     | ([i, ...xi], Some (String c), t) => tok xi (Some (String (c ^ Char.escaped i))) t
     /* State: ParsingNumber */
     | (['0'..'9' as i, ...xi], Some (Number c), t) => tok xi (Some (Number (c ^ Char.escaped i))) t
-    | ([')', ...xi], Some (Number c), t) => tok xi None [CloseParen, (Number c), ...t]
-    | ([' ', ...xi], Some (Number c), t) => tok xi None [(Number c), ...t]
+    | ([')', ...xi], Some (Number c), t) => tok xi None [CloseParen, Number c, ...t]
+    | ([' ', ...xi], Some (Number c), t) => tok xi None [Number c, ...t]
     /* State: ParsingName */
     | (['a'..'z' as i, ...xi], Some (Name c), t) => tok xi (Some (Name (c ^ Char.escaped i))) t
-    | ([')', ...xi], Some (Name c), t) => tok xi None [CloseParen, (Name c), ...t]
-    | ([' ', ...xi], Some (Name c), t) => tok xi None [(Name c), ...t]
+    | ([')', ...xi], Some (Name c), t) => tok xi None [CloseParen, Name c, ...t]
+    | ([' ', ...xi], Some (Name c), t) => tok xi None [Name c, ...t]
     /* Errors */
     | (_, _, t) => List.rev t /* TODO: handle errors */
     };
@@ -473,6 +482,23 @@ let parser tokens => {
   parse tokens [] []
 };
 
+let transformer astList => {
+  let rec transform astNode transformedContext =>
+    switch (astNode, transformedContext) {
+    | (CallExpression c _ as ce, None) =>
+      transform ce (Some (TExpressionStatement (TCallExpression (Identifier c) [])))
+    | (CallExpression _ l, Some (TExpressionStatement (TCallExpression c [] as tce))) =>
+      TCallExpression c (List.map (fun n => transform n (Some tce)) l)
+    | (CallExpression _ l, Some (TCallExpression c []) as tce) =>
+      TCallExpression c (List.map (fun n => transform n tce) l)
+    | (NumberLiteral num, Some (TCallExpression c a)) => TCallExpression c [TNumber num, ...a]
+    | (StringLiteral s, Some (TCallExpression c a)) => TCallExpression c [TString s, ...a]
+    /* Errors */
+    | (_, _) => TString "Error" /* TODO: handle errors */
+    };
+  List.map (fun x => transform x None) astList
+};
+
 let debugToken token =>
   switch token {
   | OpenParen => "OpenParen"
@@ -491,14 +517,38 @@ let rec debugAstNode astNode =>
       " " ["CallExpression", n, List.fold_left (fun acc x => debugAstNode x ^ acc) "" params]
   };
 
+let rec debugTransformedAstNode astNode tabs =>
+  switch astNode {
+  | TNumber n => String.concat tabs ["\n", "Number: ", n]
+  | TString s => String.concat "\n" [tabs, "String: ", s]
+  | TExpressionStatement _ => String.concat "\n" [tabs, "ExpressionStatement: "]
+  | TCallExpression (Identifier n) params =>
+    String.concat
+      "\n"
+      [
+        tabs,
+        "CallExpression",
+        n,
+        List.fold_left (fun acc x => debugTransformedAstNode x (tabs ^ "_") ^ acc) "" params
+      ]
+  };
+
 let test = parser (tokenizer "(add 2 (subtract 4 2))");
 
 /* Js.log (Js.Json.stringifyAny (tokenizer "(add 2 4)")); */
 /* List.iter (fun k => Js.log (debugToken k)) (tokenizer "(add 2 (subtract 4 2))"); */
 let parsePrinted =
   switch test {
-  | Ok astTree => List.fold_left (fun acc x => debugAstNode x ^ acc) "" astTree
+  | Ok astTree => List.fold_left (fun acc x => debugAstNode x ^ acc) "\t" astTree
   | Error msg => "Error at parse stage: " ^ msg
   };
 
 Js.log parsePrinted;
+
+let testTransformer =
+  switch test {
+  | Ok astList => transformer astList
+  | Error _ => []
+  };
+
+Js.log (List.fold_left (fun acc x => debugTransformedAstNode x "" ^ acc) "" testTransformer);
