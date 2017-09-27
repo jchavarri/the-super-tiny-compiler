@@ -483,20 +483,15 @@ let parser tokens => {
 };
 
 let transformer astList => {
-  let rec transform astNode transformedContext =>
-    switch (astNode, transformedContext) {
-    | (CallExpression c _ as ce, None) =>
-      transform ce (Some (TExpressionStatement (TCallExpression (Identifier c) [])))
-    | (CallExpression _ l, Some (TExpressionStatement (TCallExpression c [] as tce))) =>
-      TCallExpression c (List.map (fun n => transform n (Some tce)) l)
-    | (CallExpression _ l, Some (TCallExpression c []) as tce) =>
-      TCallExpression c (List.map (fun n => transform n tce) l)
-    | (NumberLiteral num, Some (TCallExpression c a)) => TCallExpression c [TNumber num, ...a]
-    | (StringLiteral s, Some (TCallExpression c a)) => TCallExpression c [TString s, ...a]
-    /* Errors */
-    | (_, _) => TString "Error" /* TODO: handle errors */
+  let rec transform astNode =>
+    switch astNode {
+    | NumberLiteral num => TNumber num
+    | StringLiteral s => TString s
+    | CallExpression c l =>
+      let nl = l |> List.map transform;
+      TCallExpression (Identifier c) nl
     };
-  List.map (fun x => transform x None) astList
+  List.map transform astList
 };
 
 let debugToken token =>
@@ -519,17 +514,18 @@ let rec debugAstNode astNode =>
 
 let rec debugTransformedAstNode astNode tabs =>
   switch astNode {
-  | TNumber n => String.concat tabs ["\n", "Number: ", n]
-  | TString s => String.concat "\n" [tabs, "String: ", s]
+  | TNumber n => String.concat "" [tabs, "Number: ", n]
+  | TString s => String.concat "" [tabs, "String: ", s]
   | TExpressionStatement _ => String.concat "\n" [tabs, "ExpressionStatement: "]
   | TCallExpression (Identifier n) params =>
     String.concat
-      "\n"
+      ""
       [
+        "\n",
         tabs,
         "CallExpression",
         n,
-        List.fold_left (fun acc x => debugTransformedAstNode x (tabs ^ "_") ^ acc) "" params
+        List.fold_left (fun acc x => debugTransformedAstNode x (tabs ^ "  ") ^ acc) "" params
       ]
   };
 
