@@ -483,6 +483,7 @@ let parser tokens => {
 };
 
 let transformer astList => {
+  let wrapNode n => TExpressionStatement n;
   let rec transform astNode =>
     switch astNode {
     | NumberLiteral num => TNumber num
@@ -491,7 +492,19 @@ let transformer astList => {
       let nl = l |> List.map transform;
       TCallExpression (Identifier c) nl
     };
-  List.map transform astList
+  astList |> List.map transform |> List.map wrapNode
+};
+
+let codeGenerator nodes => {
+  let rec codeGenerate node =>
+    switch node {
+    | TExpressionStatement e => String.concat "" [codeGenerate e, ";\n"]
+    | TCallExpression (Identifier c) l =>
+      String.concat "" [c, "(", String.concat "," (List.map codeGenerate l), ")"]
+    | TNumber n => n
+    | TString s => s
+    };
+  List.fold_left (fun acc x => codeGenerate x ^ acc) "" nodes
 };
 
 let debugToken token =>
@@ -509,14 +522,14 @@ let rec debugAstNode astNode =>
   | StringLiteral s => String.concat "" ["String", s, " "]
   | CallExpression n params =>
     String.concat
-      " " ["CallExpression", n, List.fold_left (fun acc x => debugAstNode x ^ acc) "" params]
+      " " ["ce(", n, List.fold_left (fun acc x => debugAstNode x ^ acc) "" params, ")"]
   };
 
 let rec debugTransformedAstNode astNode tabs =>
   switch astNode {
   | TNumber n => String.concat "" [tabs, "Number: ", n]
   | TString s => String.concat "" [tabs, "String: ", s]
-  | TExpressionStatement _ => String.concat "\n" [tabs, "ExpressionStatement: "]
+  | TExpressionStatement e => String.concat "\n" [tabs, "ExpressionStatement: ", debugTransformedAstNode e tabs]
   | TCallExpression (Identifier n) params =>
     String.concat
       ""
@@ -548,3 +561,5 @@ let testTransformer =
   };
 
 Js.log (List.fold_left (fun acc x => debugTransformedAstNode x "" ^ acc) "" testTransformer);
+
+Js.log (codeGenerator testTransformer);
