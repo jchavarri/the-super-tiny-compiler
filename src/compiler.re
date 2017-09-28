@@ -470,8 +470,10 @@ let parser tokens => {
       parse xt [CallExpression s [NumberLiteral num, ...params], ...xs] p
     | ([String str, ...xt], [CallExpression s params, ...xs], p) =>
       parse xt [CallExpression s [StringLiteral str, ...params], ...xs] p
+    | ([CloseParen, ...xt], [CallExpression n l, CallExpression pn pl, ...s], p) =>
+      parse xt [CallExpression pn [CallExpression n l, ...pl], ...s] p
     | ([CloseParen, ...xt], [ce, ...s], p) => parse xt s [ce, ...p]
-    | ([], [], p) => Ok (List.rev p)
+    | ([], [], p) => Ok p
     | (_, [_, ..._], _) => Error "Unmatched opened and closed parenthesis"
     | ([Number _, ..._], _, _) => Error "Unexpected \"Number\" token"
     | ([String _, ..._], _, _) => Error "Unexpected \"String\" token"
@@ -500,11 +502,11 @@ let codeGenerator nodes => {
     switch node {
     | TExpressionStatement e => String.concat "" [codeGenerate e, ";\n"]
     | TCallExpression (Identifier c) l =>
-      String.concat "" [c, "(", String.concat "," (List.map codeGenerate l), ")"]
+      String.concat "" [c, "(", String.concat "," (List.rev (List.map codeGenerate l)), ")"]
     | TNumber n => n
     | TString s => s
     };
-  List.fold_left (fun acc x => codeGenerate x ^ acc) "" nodes
+  List.fold_left (fun acc x => acc ^ codeGenerate x) "" nodes
 };
 
 let debugToken token =>
@@ -521,24 +523,24 @@ let rec debugAstNode astNode =>
   | NumberLiteral n => String.concat "" ["Number", n, " "]
   | StringLiteral s => String.concat "" ["String", s, " "]
   | CallExpression n params =>
-    String.concat
-      " " ["ce(", n, List.fold_left (fun acc x => debugAstNode x ^ acc) "" params, ")"]
+    String.concat " " ["ce(", n, List.fold_left (fun acc x => debugAstNode x ^ acc) "" params, ")"]
   };
 
 let rec debugTransformedAstNode astNode tabs =>
   switch astNode {
-  | TNumber n => String.concat "" [tabs, "Number: ", n]
-  | TString s => String.concat "" [tabs, "String: ", s]
-  | TExpressionStatement e => String.concat "\n" [tabs, "ExpressionStatement: ", debugTransformedAstNode e tabs]
+  | TNumber n => String.concat "" ["\n", tabs, "Number: ", n]
+  | TString s => String.concat "" ["\n", tabs, "String: ", s]
+  | TExpressionStatement e =>
+    String.concat "" [tabs, "ExpressionStatement: ", debugTransformedAstNode e (tabs ^ "--")]
   | TCallExpression (Identifier n) params =>
     String.concat
       ""
       [
         "\n",
         tabs,
-        "CallExpression",
+        "CallExpression: ",
         n,
-        List.fold_left (fun acc x => debugTransformedAstNode x (tabs ^ "  ") ^ acc) "" params
+        List.fold_left (fun acc x => debugTransformedAstNode x (tabs ^ "--") ^ acc) "" params
       ]
   };
 
@@ -560,6 +562,9 @@ let testTransformer =
   | Error _ => []
   };
 
+Js.log "\n*** Transformer ***";
 Js.log (List.fold_left (fun acc x => debugTransformedAstNode x "" ^ acc) "" testTransformer);
+
+Js.log "\n*** Code generator ***";
 
 Js.log (codeGenerator testTransformer);
