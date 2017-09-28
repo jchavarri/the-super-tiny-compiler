@@ -436,28 +436,34 @@ let tokenizer input => {
        character.
 
        We check to see if we have an open parenthesis: */
-    switch (input, current, tokens) {
-    /* State: Nothing in current */
-    | (['(', ...xi], None, t) => tok xi None [OpenParen, ...t]
-    | ([')', ...xi], None, t) => tok xi None [CloseParen, ...t]
-    | ([' ' | '\t' | '\r' | '\n', ...xi], None, t) => tok xi None t
-    | (['"', ...xi], None, t) => tok xi (Some (String "")) t
-    | (['0'..'9' as i, ...xi], None, t) => tok xi (Some (Number (Char.escaped i))) t
-    | (['a'..'z' as i, ...xi], None, t) => tok xi (Some (Name (Char.escaped i))) t
-    | ([], None, t) => List.rev t
-    /* State: ParsingString */
-    | (['"', ...xi], Some (String c), t) => tok xi None [String c, ...t] /* TODO escape double quotes :) */
-    | ([i, ...xi], Some (String c), t) => tok xi (Some (String (c ^ Char.escaped i))) t
-    /* State: ParsingNumber */
-    | (['0'..'9' as i, ...xi], Some (Number c), t) => tok xi (Some (Number (c ^ Char.escaped i))) t
-    | ([')', ...xi], Some (Number c), t) => tok xi None [CloseParen, Number c, ...t]
-    | ([' ', ...xi], Some (Number c), t) => tok xi None [Number c, ...t]
-    /* State: ParsingName */
-    | (['a'..'z' as i, ...xi], Some (Name c), t) => tok xi (Some (Name (c ^ Char.escaped i))) t
-    | ([')', ...xi], Some (Name c), t) => tok xi None [CloseParen, Name c, ...t]
-    | ([' ', ...xi], Some (Name c), t) => tok xi None [Name c, ...t]
-    /* Errors */
-    | (_, _, t) => List.rev t /* TODO: handle errors */
+    switch input {
+    | [] => List.rev tokens
+    | _ =>
+      let head = List.hd input;
+      let tail = List.tl input;
+      let next = tok tail;
+      switch (head, current, tokens) {
+      /* State: Nothing in current */
+      | ('(', None, t) => next None [OpenParen, ...t]
+      | (')', None, t) => next None [CloseParen, ...t]
+      | (' ' | '\t' | '\r' | '\n', None, t) => next None t
+      | ('"', None, t) => next (Some (String "")) t
+      | ('0'..'9' as i, None, t) => next (Some (Number (Char.escaped i))) t
+      | ('a'..'z' as i, None, t) => next (Some (Name (Char.escaped i))) t
+      /* State: ParsingString */
+      | ('"', Some (String c), t) => next None [String c, ...t] /* TODO allow escaped double quotes :) */
+      | (i, Some (String c), t) => next (Some (String (c ^ Char.escaped i))) t
+      /* State: ParsingNumber */
+      | ('0'..'9' as i, Some (Number c), t) => next (Some (Number (c ^ Char.escaped i))) t
+      | (')', Some (Number c), t) => next None [CloseParen, Number c, ...t]
+      | (' ', Some (Number c), t) => next None [Number c, ...t]
+      /* State: ParsingName */
+      | ('a'..'z' as i, Some (Name c), t) => next (Some (Name (c ^ Char.escaped i))) t
+      | (')', Some (Name c), t) => next None [CloseParen, Name c, ...t]
+      | (' ', Some (Name c), t) => next None [Name c, ...t]
+      /* Errors */
+      | (_, _, t) => List.rev t /* TODO: handle errors */
+      }
     };
   tok (explode input) machine.current machine.parsed
 };
@@ -563,6 +569,7 @@ let testTransformer =
   };
 
 Js.log "\n*** Transformer ***";
+
 Js.log (List.fold_left (fun acc x => debugTransformedAstNode x "" ^ acc) "" testTransformer);
 
 Js.log "\n*** Code generator ***";
