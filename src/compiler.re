@@ -56,4 +56,13 @@ let tokenizer input => {
   tok (explode input) machine.current machine.parsed
 };
 
-Js.log @@ Js.Json.stringifyAny (tokenizer "(add 2 (subtract 4 2))");
+let printToken token =>
+  switch token {
+  | OpenParen => "OpenParen"
+  | CloseParen => "CloseParen"
+  | Number s => "Number " ^ s
+  | String s => "String " ^ s
+  | Name s => "Name " ^ s
+  };
+
+List.iter (fun k => Js.log (printToken k)) (tokenizer "(add 2 (subtract 4 2))");
