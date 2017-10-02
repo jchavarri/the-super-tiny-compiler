@@ -5,13 +5,6 @@ type token =
   | String string
   | Name string;
 
-type tokenMachine = {
-  current: option token,
-  parsed: list token
-};
-
-let machine = {current: None, parsed: []};
-
 let explode s => {
   let rec exp i l =>
     if (i < 0) {
@@ -53,7 +46,7 @@ let tokenizer input => {
       | (_, _, t) => List.rev t /* TODO: handle errors */
       }
     };
-  tok (explode input) machine.current machine.parsed
+  tok (explode input) None []
 };
 
 let printToken token =>
